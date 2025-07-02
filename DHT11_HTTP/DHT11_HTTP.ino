@@ -8,8 +8,8 @@
 #define DHTTYPE DHT11    // Sensor type
 
 // WiFi credentials
-const char* ssid = "Wereen z";
-const char* pass = "wereenzz";
+const char* ssid = "ssid";
+const char* pass = "pass";
 
 // Your server URL
 const char* serverName = "https://humancc.site/ndhos/DHT11/dht11_backend.php";
