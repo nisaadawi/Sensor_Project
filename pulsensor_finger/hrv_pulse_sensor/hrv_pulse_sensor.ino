@@ -1,147 +1,164 @@
+// ===============================
+// XD-58C Signal Visualizer + HRV
+// ===============================
+
 const int PULSE_PIN = 36;
 
-int Signal;
-int Threshold = 2000;
+int sensorValue = 0;
+int prevValue = 0;
+int baseline = 2000;
+int minSig = 4095;
+int maxSig = 0;
 
+// Beat detection
+bool lookingForBeat = false;
 unsigned long lastBeat = 0;
-unsigned long beatTimes[10];     // Last 10 RR intervals
-int beatIndex = 0;
-int beatsCollected = 0;          // Valid RR intervals
-bool rising = false;
 
-// Rolling HRV arrays for median
-float rollingRMSSD[5] = {0};
-float rollingSDNN[5] = {0};
-int rollingIndex = 0;
+// Intervals storage
+unsigned long intervals[15];
+int idx = 0;
+int count = 0;
 
-// ===============================
-// Setup
+// HRV smoothing
+float smoothRMSSD = 0;
+float smoothSDNN = 0;
+
+int sampleCount = 0;
+
 // ===============================
 void setup() {
   Serial.begin(115200);
+  pinMode(PULSE_PIN, INPUT);
   delay(1000);
-  Serial.println("BPM + Rolling Median HRV Starting...");
-
-  for (int i = 0; i < 10; i++) beatTimes[i] = 0;
+  
+  Serial.println("\n=== XD-58C HRV Monitor ===");
+  Serial.println("Calibrating for 3 seconds...");
+  
+  // Calibrate
+  long sum = 0;
+  for(int i = 0; i < 300; i++) {
+    int r = analogRead(PULSE_PIN);
+    sum += r;
+    if(r < minSig) minSig = r;
+    if(r > maxSig) maxSig = r;
+    delay(10);
+  }
+  baseline = sum / 300;
+  
+  Serial.print("✓ Baseline: ");
+  Serial.println(baseline);
+  Serial.print("✓ Range: ");
+  Serial.print(minSig);
+  Serial.print(" - ");
+  Serial.println(maxSig);
+  Serial.print("✓ Swing: ");
+  Serial.println(maxSig - minSig);
+  
+  if(maxSig - minSig < 50) {
+    Serial.println("\n⚠️  Signal too weak - check finger placement!");
+  }
+  
+  Serial.println("\n--- Live Signal (updates every 0.5s) ---");
+  delay(1000);
 }
 
-// ===============================
-// Main loop
 // ===============================
 void loop() {
-
-  Signal = analogRead(PULSE_PIN);
-
-  // Adaptive threshold
-  Threshold = (Threshold * 9 + Signal) / 10;
-
-  // Detect rising edge
-  if (Signal > Threshold + 25 && !rising) rising = true;
-
-  // Detect falling edge = heartbeat
-  if (Signal < Threshold && rising) {
+  prevValue = sensorValue;
+  sensorValue = analogRead(PULSE_PIN);
+  
+  // Update baseline slowly
+  baseline = (baseline * 98 + sensorValue * 2) / 100;
+  
+  // Track min/max
+  if(sensorValue < minSig) minSig = sensorValue;
+  if(sensorValue > maxSig) maxSig = sensorValue;
+  
+  // Print signal graph every 50 samples (0.5 sec)
+  sampleCount++;
+  if(sampleCount >= 50) {
+    sampleCount = 0;
+    
+    // Visual bar graph
+    Serial.print("Sig:");
+    int bars = map(sensorValue, 0, 4095, 0, 50);
+    for(int i = 0; i < bars; i++) Serial.print("█");
+    Serial.print(" ");
+    Serial.print(sensorValue);
+    Serial.print(" | Base:");
+    Serial.print(baseline);
+    Serial.print(" | Diff:");
+    Serial.print(sensorValue - baseline);
+    Serial.print(" | Beats:");
+    Serial.println(count);
+    
+    // Reset range
+    minSig = sensorValue;
+    maxSig = sensorValue;
+  }
+  
+  // BEAT DETECTION
+  // XD-58C: look for signal crossing BELOW baseline
+  
+  if(sensorValue > baseline + 100) {
+    lookingForBeat = true;
+  }
+  
+  if(lookingForBeat && sensorValue < baseline - 100) {
     unsigned long now = millis();
-    unsigned long interval = now - lastBeat;
-
-    // Only realistic RR intervals (50–170 BPM)
-    if (interval > 350 && interval < 1200) {
-
-      // Optional smoothing with previous interval
-      if (beatsCollected > 0) {
-        int prevIndex = (beatIndex - 1 + 10) % 10;
-        interval = (interval + beatTimes[prevIndex]) / 2;
-      }
-
-      // Store interval in circular buffer
-      beatTimes[beatIndex] = interval;
-      beatIndex = (beatIndex + 1) % 10;
-      if (beatsCollected < 10) beatsCollected++;
-
-      // ===== Calculate BPM =====
-      long sumInterval = 0;
-      for (int i = 0; i < beatsCollected; i++) sumInterval += beatTimes[i];
-      long avgInterval = sumInterval / beatsCollected;
-      int bpm = 60000 / avgInterval;
-
-      Serial.print("BPM:");
-      Serial.print(bpm);
-
-      // ===== Calculate HRV if we have enough beats =====
-      if (beatsCollected == 10) {
-        float sdnn = computeSDNN();
-        float rmssd = computeRMSSD();
-
-        // Update rolling median arrays
-        rollingSDNN[rollingIndex] = sdnn;
-        rollingRMSSD[rollingIndex] = rmssd;
-        rollingIndex = (rollingIndex + 1) % 5;
-
-        // Compute median HRV
-        float medianSDNN = median(rollingSDNN, 5);
-        float medianRMSSD = median(rollingRMSSD, 5);
-
-        Serial.print("   SDNN(median):");
-        Serial.print(medianSDNN);
-        Serial.print("   RMSSD(median):");
-        Serial.println(medianRMSSD);
-
-      } else {
-        Serial.print("   Collecting HRV data...");
-        Serial.println(beatsCollected);
+    unsigned long ibi = now - lastBeat;
+    
+    if(ibi > 400 && ibi < 1500 && lastBeat > 0) {
+      // Valid beat!
+      intervals[idx] = ibi;
+      idx = (idx + 1) % 15;
+      if(count < 15) count++;
+      
+      if(count >= 8) {
+        // Calculate BPM
+        unsigned long sumIBI = 0;
+        for(int i = 0; i < count; i++) sumIBI += intervals[i];
+        int bpm = 60000 / (sumIBI / count);
+        
+        // Calculate SDNN
+        float meanIBI = sumIBI / (float)count;
+        float varSum = 0;
+        for(int i = 0; i < count; i++) {
+          float d = intervals[i] - meanIBI;
+          varSum += d * d;
+        }
+        float sdnn = sqrt(varSum / count);
+        
+        // Calculate RMSSD
+        float diffSum = 0;
+        for(int i = 1; i < count; i++) {
+          float d = (float)intervals[i] - (float)intervals[i-1];
+          diffSum += d * d;
+        }
+        float rmssd = sqrt(diffSum / (count - 1));
+        
+        // Smooth
+        if(smoothRMSSD == 0) {
+          smoothRMSSD = rmssd;
+          smoothSDNN = sdnn;
+        } else {
+          smoothRMSSD = smoothRMSSD * 0.8 + rmssd * 0.2;
+          smoothSDNN = smoothSDNN * 0.8 + sdnn * 0.2;
+        }
+        
+        Serial.print(">>> BPM:");
+        Serial.print(bpm);
+        Serial.print(" SDNN:");
+        Serial.print(smoothSDNN, 1);
+        Serial.print(" RMSSD:");
+        Serial.print(smoothRMSSD, 1);
+        Serial.println(" <<<");
       }
     }
-
+    
     lastBeat = now;
-    rising = false;
+    lookingForBeat = false;
   }
-
+  
   delay(10);
-}
-
-// ===============================
-// HRV Functions
-// ===============================
-
-float computeSDNN() {
-  float sum = 0, sumSq = 0;
-  int count = beatsCollected;
-  if (count < 2) return 0;
-  for (int i = 0; i < count; i++) {
-    float x = (float)beatTimes[i];
-    sum += x;
-    sumSq += x * x;
-  }
-  float mean = sum / count;
-  return sqrt((sumSq / count) - (mean * mean));
-}
-
-float computeRMSSD() {
-  float sumSq = 0;
-  int count = 0;
-  if (beatsCollected < 2) return 0;
-  for (int i = 1; i < beatsCollected; i++) {
-    int prevIndex = (beatIndex - beatsCollected + i - 1 + 10) % 10;
-    int currIndex = (beatIndex - beatsCollected + i + 10) % 10;
-    float diff = (float)beatTimes[currIndex] - (float)beatTimes[prevIndex];
-    sumSq += diff * diff;
-    count++;
-  }
-  if (count < 1) return 0;
-  return sqrt(sumSq / count);
-}
-
-// Compute median
-float median(float arr[], int size) {
-  float temp[size];
-  memcpy(temp, arr, sizeof(float) * size);
-
-  // Simple bubble sort
-  for (int i = 0; i < size-1; i++)
-    for (int j = i+1; j < size; j++)
-      if (temp[i] > temp[j]) {
-        float t = temp[i]; temp[i] = temp[j]; temp[j] = t;
-      }
-
-  if (size % 2 == 0) return (temp[size/2 - 1] + temp[size/2]) / 2;
-  else return temp[size/2];
 }
