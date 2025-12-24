@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HRV Monitor Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .connection-panel {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+        }
+
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin: 5px;
+        }
+
+        .btn:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn.connected {
+            background: #10b981;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            margin-left: 15px;
+        }
+
+        .status.disconnected {
+            background: #fee;
+            color: #c00;
+        }
+
+        .status.connected {
+            background: #efe;
+            color: #0a0;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .metric-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            transition: transform 0.3s;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .metric-label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .metric-value {
+            font-size: 3em;
+            font-weight: bold;
+            color: #667eea;
+            line-height: 1;
+        }
+
+        .metric-unit {
+            font-size: 0.4em;
+            color: #999;
+            margin-left: 5px;
+        }
+
+        .metric-status {
+            margin-top: 10px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            display: inline-block;
+        }
+
+        .status-relaxed { background: #d1fae5; color: #065f46; }
+        .status-normal { background: #dbeafe; color: #1e40af; }
+        .status-stressed { background: #fee2e2; color: #991b1b; }
+
+        .chart-container {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+        }
+
+        .chart-title {
+            font-size: 1.3em;
+            margin-bottom: 15px;
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        .log-panel {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            padding: 8px;
+            margin: 5px 0;
+            border-left: 3px solid #667eea;
+            background: #f8f9fa;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .log-entry.beat {
+            border-left-color: #10b981;
+            background: #f0fdf4;
+        }
+
+        .log-entry.reject {
+            border-left-color: #ef4444;
+            background: #fef2f2;
+        }
+
+        .instructions {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+
+        .instructions h3 {
+            margin-bottom: 10px;
+            color: #92400e;
+        }
+
+        .instructions ol {
+            margin-left: 20px;
+            color: #78350f;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .heartbeat-indicator {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            background: #ef4444;
+            border-radius: 50%;
+            margin-left: 10px;
+            animation: pulse 1s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💓 Heart Rate Variability Monitor</h1>
+            <p>Real-time HRV Analysis Dashboard</p>
+        </div>
+
+        <div class="instructions">
+            <h3>📋 How to Connect:</h3>
+            <ol>
+                <li>Upload the ESP32 code to your device</li>
+                <li>Click "Connect to ESP32" below</li>
+                <li>Select the correct COM port (usually "USB Serial Device" or "CP210x")</li>
+                <li>Place finger on sensor and stay still</li>
+                <li>Watch the graphs update in real-time!</li>
+            </ol>
+        </div>
+
+        <div class="connection-panel">
+            <button id="connectBtn" class="btn">Connect to ESP32</button>
+            <button id="disconnectBtn" class="btn" disabled>Disconnect</button>
+            <button id="clearBtn" class="btn">Clear Data</button>
+            <span id="statusIndicator" class="status disconnected">Disconnected</span>
+            <span id="heartbeatIndicator"></span>
+        </div>
+
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-label">Heart Rate</div>
+                <div class="metric-value">
+                    <span id="bpmValue">--</span>
+                    <span class="metric-unit">BPM</span>
+                </div>
+                <div id="bpmStatus" class="metric-status">Waiting...</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-label">SDNN</div>
+                <div class="metric-value">
+                    <span id="sdnnValue">--</span>
+                    <span class="metric-unit">ms</span>
+                </div>
+                <div id="sdnnStatus" class="metric-status">Waiting...</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-label">RMSSD</div>
+                <div class="metric-value">
+                    <span id="rmssdValue">--</span>
+                    <span class="metric-unit">ms</span>
+                </div>
+                <div id="rmssdStatus" class="metric-status">Waiting...</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-label">Valid Beats</div>
+                <div class="metric-value">
+                    <span id="validBeats">0</span>
+                    <span class="metric-unit">/10</span>
+                </div>
+                <div class="metric-status status-normal">Collecting...</div>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">Heart Rate Over Time</div>
+            <canvas id="bpmChart"></canvas>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">HRV Metrics (SDNN & RMSSD)</div>
+            <canvas id="hrvChart"></canvas>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">Beat-to-Beat Intervals (IBI)</div>
+            <canvas id="ibiChart"></canvas>
+        </div>
+
+        <div class="log-panel">
+            <div class="chart-title">Live Data Stream</div>
+            <div id="logContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        let port;
+        let reader;
+        let isReading = false;
+        
+        // Data storage
+        const maxDataPoints = 50;
+        const bpmData = [];
+        const sdnnData = [];
+        const rmssdData = [];
+        const ibiData = [];
+        const timeLabels = [];
+        
+        // Chart configurations
+        const chartConfig = {
+            type: 'line',
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                animation: { duration: 300 },
+                scales: {
+                    y: { beginAtZero: false },
+                    x: { display: false }
+                },
+                plugins: {
+                    legend: { display: true, position: 'top' }
+                }
+            }
+        };
+
+        // Initialize charts
+        const bpmChart = new Chart(document.getElementById('bpmChart'), {
+            ...chartConfig,
+            data: {
+                labels: timeLabels,
+                datasets: [{
+                    label: 'BPM',
+                    data: bpmData,
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }]
+            }
+        });
+
+        const hrvChart = new Chart(document.getElementById('hrvChart'), {
+            ...chartConfig,
+            data: {
+                labels: timeLabels,
+                datasets: [
+                    {
+                        label: 'SDNN (ms)',
+                        data: sdnnData,
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        tension: 0.4
+                    },
+                    {
+                        label: 'RMSSD (ms)',
+                        data: rmssdData,
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        tension: 0.4
+                    }
+                ]
+            }
+        });
+
+        const ibiChart = new Chart(document.getElementById('ibiChart'), {
+            ...chartConfig,
+            data: {
+                labels: timeLabels,
+                datasets: [{
+                    label: 'IBI (ms)',
+                    data: ibiData,
+                    borderColor: '#f59e0b',
+                    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: {
+                ...chartConfig.options,
+                scales: {
+                    y: { 
+                        beginAtZero: false,
+                        suggestedMin: 400,
+                        suggestedMax: 1200
+                    }
+                }
+            }
+        });
+
+        // Connect button
+        document.getElementById('connectBtn').addEventListener('click', async () => {
+            try {
+                port = await navigator.serial.requestPort();
+                await port.open({ baudRate: 115200 });
+                
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+                document.getElementById('statusIndicator').textContent = 'Connected';
+                document.getElementById('statusIndicator').className = 'status connected';
+                
+                isReading = true;
+                readSerialData();
+                addLog('Connected to ESP32', 'beat');
+            } catch (error) {
+                addLog('Connection failed: ' + error.message, 'reject');
+            }
+        });
+
+        // Disconnect button
+        document.getElementById('disconnectBtn').addEventListener('click', async () => {
+            isReading = false;
+            if (reader) {
+                await reader.cancel();
+            }
+            if (port) {
+                await port.close();
+            }
+            
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+            document.getElementById('statusIndicator').textContent = 'Disconnected';
+            document.getElementById('statusIndicator').className = 'status disconnected';
+            document.getElementById('heartbeatIndicator').innerHTML = '';
+            
+            addLog('Disconnected', 'reject');
+        });
+
+        // Clear data button
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            bpmData.length = 0;
+            sdnnData.length = 0;
+            rmssdData.length = 0;
+            ibiData.length = 0;
+            timeLabels.length = 0;
+            
+            bpmChart.update();
+            hrvChart.update();
+            ibiChart.update();
+            
+            document.getElementById('logContainer').innerHTML = '';
+            addLog('Data cleared', 'beat');
+        });
+
+        // Read serial data
+        async function readSerialData() {
+            const textDecoder = new TextDecoderStream();
+            const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+            reader = textDecoder.readable.getReader();
+            
+            let buffer = '';
+            
+            try {
+                while (isReading) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += value;
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+                    
+                    lines.forEach(line => parseLine(line.trim()));
+                }
+            } catch (error) {
+                addLog('Read error: ' + error.message, 'reject');
+            } finally {
+                reader.releaseLock();
+            }
+        }
+
+        // Parse incoming data
+        function parseLine(line) {
+            if (!line) return;
+            
+            addLog(line);
+            
+            // Parse beat detection: "♥ BEAT #X | IBI:XXXms | REAL BPM:XX"
+            const beatMatch = line.match(/♥ BEAT #(\d+) \| IBI:(\d+)ms \| REAL BPM:(\d+)/);
+            if (beatMatch) {
+                const ibi = parseInt(beatMatch[2]);
+                const bpm = parseInt(beatMatch[3]);
+                
+                updateMetric('bpmValue', bpm);
+                addDataPoint(bpmData, bpm);
+                addDataPoint(ibiData, ibi);
+                addTimeLabel();
+                
+                bpmChart.update();
+                ibiChart.update();
+                
+                showHeartbeat();
+                updateBPMStatus(bpm);
+                
+                return;
+            }
+            
+            // Parse HRV: "HRV: SDNN:XX.Xms | RMSSD:XX.Xms | Valid:X/10"
+            const hrvMatch = line.match(/HRV: SDNN:([\d.]+)ms \| RMSSD:([\d.]+)ms \| Valid:(\d+)\/10/);
+            if (hrvMatch) {
+                const sdnn = parseFloat(hrvMatch[1]);
+                const rmssd = parseFloat(hrvMatch[2]);
+                const valid = parseInt(hrvMatch[3]);
+                
+                updateMetric('sdnnValue', sdnn.toFixed(1));
+                updateMetric('rmssdValue', rmssd.toFixed(1));
+                updateMetric('validBeats', valid);
+                
+                addDataPoint(sdnnData, sdnn);
+                addDataPoint(rmssdData, rmssd);
+                
+                hrvChart.update();
+                
+                updateHRVStatus(sdnn, rmssd);
+                
+                return;
+            }
+        }
+
+        function addDataPoint(array, value) {
+            array.push(value);
+            if (array.length > maxDataPoints) {
+                array.shift();
+            }
+        }
+
+        function addTimeLabel() {
+            const now = new Date();
+            timeLabels.push(now.toLocaleTimeString());
+            if (timeLabels.length > maxDataPoints) {
+                timeLabels.shift();
+            }
+        }
+
+        function updateMetric(elementId, value) {
+            document.getElementById(elementId).textContent = value;
+        }
+
+        function updateBPMStatus(bpm) {
+            const status = document.getElementById('bpmStatus');
+            if (bpm < 60) {
+                status.textContent = 'Low';
+                status.className = 'metric-status status-relaxed';
+            } else if (bpm <= 100) {
+                status.textContent = 'Normal';
+                status.className = 'metric-status status-normal';
+            } else {
+                status.textContent = 'Elevated';
+                status.className = 'metric-status status-stressed';
+            }
+        }
+
+        function updateHRVStatus(sdnn, rmssd) {
+            // SDNN status
+            const sdnnStatus = document.getElementById('sdnnStatus');
+            if (sdnn > 50) {
+                sdnnStatus.textContent = 'Excellent';
+                sdnnStatus.className = 'metric-status status-relaxed';
+            } else if (sdnn > 30) {
+                sdnnStatus.textContent = 'Good';
+                sdnnStatus.className = 'metric-status status-normal';
+            } else {
+                sdnnStatus.textContent = 'Low';
+                sdnnStatus.className = 'metric-status status-stressed';
+            }
+            
+            // RMSSD status
+            const rmssdStatus = document.getElementById('rmssdStatus');
+            if (rmssd > 40) {
+                rmssdStatus.textContent = 'Relaxed';
+                rmssdStatus.className = 'metric-status status-relaxed';
+            } else if (rmssd > 20) {
+                rmssdStatus.textContent = 'Normal';
+                rmssdStatus.className = 'metric-status status-normal';
+            } else {
+                rmssdStatus.textContent = 'Stressed';
+                rmssdStatus.className = 'metric-status status-stressed';
+            }
+        }
+
+        function showHeartbeat() {
+            const indicator = document.getElementById('heartbeatIndicator');
+            indicator.innerHTML = '<span class="heartbeat-indicator"></span>';
+            setTimeout(() => indicator.innerHTML = '', 300);
+        }
+
+        function addLog(message, type = '') {
+            const logContainer = document.getElementById('logContainer');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            
+            logContainer.insertBefore(entry, logContainer.firstChild);
+            
+            // Keep only last 50 entries
+            while (logContainer.children.length > 50) {
+                logContainer.removeChild(logContainer.lastChild);
+            }
+        }
+
+        // Check for Web Serial API support
+        if (!('serial' in navigator)) {
+            alert('Web Serial API not supported. Please use Chrome, Edge, or Opera browser.');
+            document.getElementById('connectBtn').disabled = true;
+        }
+    </script>
+</body>
+</html>
